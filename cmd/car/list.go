@@ -290,6 +290,9 @@ func printUnixFSNodeLong(c *cli.Context, prefix string, node cid.Cid, ls *ipld.L
 			}
 			cidl, ok := cl.(cidlink.Link)
 			ft, err := fileType(cidl.Cid, ls)
+			if err != nil {
+				return err
+			}
 			fmt.Fprintf(outStream, "%s\t%s\t%s\n", cl, name, ft)
 			if ok {
 				if err := printUnixFSNodeLong(c, name, cidl.Cid, ls, outStream); err != nil {
@@ -313,6 +316,9 @@ func printUnixFSNodeLong(c *cli.Context, prefix string, node cid.Cid, ls *ipld.L
 			}
 			cidl, ok := cl.(cidlink.Link)
 			ft, err := fileType(cidl.Cid, ls)
+			if err != nil {
+				return err
+			}
 			fmt.Fprintf(outStream, "%s\t%s\t%s\n", cl, path.Join(prefix, n.String()), ft)
 			if ok {
 				if err := printUnixFSNodeLong(c, path.Join(prefix, n.String()), cidl.Cid, ls, outStream); err != nil {
