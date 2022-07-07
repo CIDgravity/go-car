@@ -289,11 +289,8 @@ func printUnixFSNodeLong(c *cli.Context, prefix string, node cid.Cid, ls *ipld.L
 				return err
 			}
 			cidl, ok := cl.(cidlink.Link)
-			if cidl.Prefix().Codec == cid.Raw {
-				fmt.Fprintf(outStream, "%s\t%s\tfile\n", cl, name)
-			} else {
-				fmt.Fprintf(outStream, "%s\t%s\tdirectory\n", cl, name)
-			}
+			ft, err := fileType(cidl.Cid, ls)
+			fmt.Fprintf(outStream, "%s\t%s\t%s\n", cl, name, ft)
 			if ok {
 				if err := printUnixFSNodeLong(c, name, cidl.Cid, ls, outStream); err != nil {
 					return err
@@ -315,11 +312,8 @@ func printUnixFSNodeLong(c *cli.Context, prefix string, node cid.Cid, ls *ipld.L
 				return err
 			}
 			cidl, ok := cl.(cidlink.Link)
-			if cidl.Prefix().Codec == cid.Raw {
-				fmt.Fprintf(outStream, "%s\t%s\tfile\n", cl, path.Join(prefix, n.String()))
-			} else {
-				fmt.Fprintf(outStream, "%s\t%s\tdirectory\n", cl, path.Join(prefix, n.String()))
-			}
+			ft, err := fileType(cidl.Cid, ls)
+			fmt.Fprintf(outStream, "%s\t%s\t%s\n", cl, path.Join(prefix, n.String()), ft)
 			if ok {
 				if err := printUnixFSNodeLong(c, path.Join(prefix, n.String()), cidl.Cid, ls, outStream); err != nil {
 					return err
@@ -332,4 +326,26 @@ func printUnixFSNodeLong(c *cli.Context, prefix string, node cid.Cid, ls *ipld.L
 	}
 
 	return nil
+}
+
+func fileType(node cid.Cid, ls *ipld.LinkSystem) (string, error) {
+	if node.Prefix().Codec == cid.Raw {
+		return "file", nil
+	}
+
+	pbn, err := ls.Load(ipld.LinkContext{}, cidlink.Link{Cid: node}, dagpb.Type.PBNode)
+	if err != nil {
+		return "", err
+	}
+
+	pbnode := pbn.(dagpb.PBNode)
+
+	ufd, err := data.DecodeUnixFSData(pbnode.Data.Must().Bytes())
+	if err != nil {
+		return "", err
+	}
+	if ufd.FieldDataType().Int() == data.Data_Directory {
+		return "directory", nil
+	}
+	return "file", nil
 }
