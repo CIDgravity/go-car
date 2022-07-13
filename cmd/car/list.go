@@ -36,6 +36,10 @@ func ListCar(c *cli.Context) error {
 		return listUnixfs(c, outStream)
 	}
 
+	if c.Bool("long") {
+		return listLong(c, outStream)
+	}
+
 	inStream := os.Stdin
 	if c.Args().Len() >= 1 {
 		inStream, err = os.Open(c.Args().First())
@@ -219,4 +223,135 @@ func printUnixFSNode(c *cli.Context, prefix string, node cid.Cid, ls *ipld.LinkS
 	}
 
 	return nil
+}
+
+func listLong(c *cli.Context, outStream io.Writer) error {
+	if c.Args().Len() == 0 {
+		return fmt.Errorf("must provide file to read from. unixfs reading requires random access")
+	}
+
+	bs, err := blockstore.OpenReadOnly(c.Args().First())
+	if err != nil {
+		return err
+	}
+	ls := cidlink.DefaultLinkSystem()
+	ls.TrustedStorage = true
+	ls.StorageReadOpener = func(_ ipld.LinkContext, l ipld.Link) (io.Reader, error) {
+		cl, ok := l.(cidlink.Link)
+		if !ok {
+			return nil, fmt.Errorf("not a cidlink")
+		}
+		blk, err := bs.Get(c.Context, cl.Cid)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewBuffer(blk.RawData()), nil
+	}
+
+	roots, err := bs.Roots()
+	if err != nil {
+		return err
+	}
+	for _, r := range roots {
+		if err := printUnixFSNodeLong(c, "", r, &ls, outStream); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func printUnixFSNodeLong(c *cli.Context, prefix string, node cid.Cid, ls *ipld.LinkSystem, outStream io.Writer) error {
+	// it might be a raw file (bytes) node. if so, not actually an error.
+	if node.Prefix().Codec == cid.Raw {
+		return nil
+	}
+
+	pbn, err := ls.Load(ipld.LinkContext{}, cidlink.Link{Cid: node}, dagpb.Type.PBNode)
+	if err != nil {
+		return err
+	}
+
+	pbnode := pbn.(dagpb.PBNode)
+
+	ufd, err := data.DecodeUnixFSData(pbnode.Data.Must().Bytes())
+	if err != nil {
+		return err
+	}
+
+	if ufd.FieldDataType().Int() == data.Data_Directory {
+		i := pbnode.Links.Iterator()
+		for !i.Done() {
+			_, l := i.Next()
+			name := path.Join(prefix, l.Name.Must().String())
+			// recurse into the file/directory
+			cl, err := l.Hash.AsLink()
+			if err != nil {
+				return err
+			}
+			cidl, ok := cl.(cidlink.Link)
+			ft, err := fileType(cidl.Cid, ls)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(outStream, "%s\t%s\t%s\n", cl, name, ft)
+			if ok {
+				if err := printUnixFSNodeLong(c, name, cidl.Cid, ls, outStream); err != nil {
+					return err
+				}
+			}
+
+		}
+	} else if ufd.FieldDataType().Int() == data.Data_HAMTShard {
+		hn, err := hamt.AttemptHAMTShardFromNode(c.Context, pbn, ls)
+		if err != nil {
+			return err
+		}
+		i := hn.Iterator()
+		for !i.Done() {
+			n, l := i.Next()
+			// recurse into the file/directory
+			cl, err := l.AsLink()
+			if err != nil {
+				return err
+			}
+			cidl, ok := cl.(cidlink.Link)
+			ft, err := fileType(cidl.Cid, ls)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(outStream, "%s\t%s\t%s\n", cl, path.Join(prefix, n.String()), ft)
+			if ok {
+				if err := printUnixFSNodeLong(c, path.Join(prefix, n.String()), cidl.Cid, ls, outStream); err != nil {
+					return err
+				}
+			}
+		}
+	} else {
+		// file, file chunk, symlink, other un-named entities.
+		return nil
+	}
+
+	return nil
+}
+
+func fileType(node cid.Cid, ls *ipld.LinkSystem) (string, error) {
+	if node.Prefix().Codec == cid.Raw {
+		return "file", nil
+	}
+
+	pbn, err := ls.Load(ipld.LinkContext{}, cidlink.Link{Cid: node}, dagpb.Type.PBNode)
+	if err != nil {
+		return "", err
+	}
+
+	pbnode := pbn.(dagpb.PBNode)
+
+	ufd, err := data.DecodeUnixFSData(pbnode.Data.Must().Bytes())
+	if err != nil {
+		return "", err
+	}
+	if ufd.FieldDataType().Int() == data.Data_Directory {
+		return "directory", nil
+	}
+	return "file", nil
 }

@@ -143,6 +143,11 @@ func main1() int {
 						Name:  "unixfs",
 						Usage: "List unixfs filesystem from the root of the car",
 					},
+					&cli.BoolFlag{
+						Name:    "long",
+						Aliases: []string{"l"},
+						Usage:   "List in long format",
+					},
 				},
 			},
 			{
